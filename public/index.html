@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>盲文标签排版台</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>盲文标签排版台</h1>
+    <p class="subtitle">六点一级盲文 · 点阵解码 · 整词换行单标签排版 · 多标签行级拼版（0/90° 旋转） · 毫米坐标凸点 SVG · 压印路径（最近邻 + 2-opt） · 压印质检</p>
+    <nav class="mode-tabs" role="tablist" aria-label="工作模式">
+      <button id="tabDecode" class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="decode">点阵解码</button>
+      <button id="tabLayout" class="mode-tab active" type="button" role="tab" aria-selected="true" data-mode="layout">排版模式</button>
+      <button id="tabPanel" class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="panel">多标签拼版</button>
+      <button id="tabQc" class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="qc">压印质检</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ========== 点阵解码模式 ========== -->
+    <section id="viewDecode" class="mode-view" hidden>
+      <!-- 左侧：盲文输入 -->
+      <section class="panel form-panel" aria-label="点阵解码输入">
+        <label class="field">
+          <span>六点盲文 Unicode 字符串（≤5000 字符，支持多行；空白原样保留）</span>
+          <textarea id="decodeInput" rows="10" maxlength="5000"
+            placeholder="在此粘贴六点盲文，例如：&#10;⠠⠑⠠⠭⠠⠊⠠⠞⠀⠠⠙⠕⠕⠗⠀⠼⠃"></textarea>
+        </label>
+
+        <p class="hint-inline">按排版台同一套字符表反向解码：大写前缀 <b>⠠</b> 还原大小写，数字前缀 <b>⠼</b> 开启连续数字段（a–j 点位还原 1–0，段内小数点/逗号不切段）；空白（含盲文空白单元 ⠀ 与换行）与标点原样保留。非盲文字符或码表未收录的盲文点位会<b>逐个</b>在右侧列出位置与 Unicode 码点，<b>原样保留</b>在结果中，绝不静默丢弃。</p>
+
+        <div id="decodeErrors" class="errors decode-errors" role="alert" hidden></div>
+        <div id="decodeStats" class="stats" hidden></div>
+
+        <div class="actions">
+          <button id="decodeCopy" type="button" disabled>复制解码结果</button>
+          <button id="decodeClear" type="button" class="btn-secondary decode-btn-secondary">清空输入</button>
+        </div>
+        <div id="decodeCopyMsg" class="calib-msg ok" role="status" hidden></div>
+      </section>
+
+      <!-- 右侧：解码结果与错误定位 -->
+      <section class="panel preview-panel" aria-label="点阵解码结果">
+        <div class="preview-head">
+          <h2>解码结果</h2>
+          <span class="muted" id="decodeCount"></span>
+        </div>
+        <label class="field decode-output-field">
+          <span>还原文本（decodedText；未知字符以红色下划线标出，点击下方错误可定位输入位置）</span>
+          <textarea id="decodeOutput" rows="6" readonly
+            placeholder="解码后的英文文本将显示在这里"></textarea>
+        </label>
+
+        <div class="preview-head">
+          <h2>逐单元对照（cells）</h2>
+          <span class="muted">点击任一单元可在输入框定位该字符</span>
+        </div>
+        <div id="decodeCells" class="decode-cells">
+          <p class="placeholder">粘贴六点盲文后，此处按单元显示点号、类型与还原字符</p>
+        </div>
+      </section>
+    </section>
+
+    <!-- ========== 排版模式 ========== -->
+    <section id="viewLayout" class="mode-view">
+      <!-- 左侧：参数表单 -->
+      <section class="panel form-panel" aria-label="排版参数">
+        <label class="field">
+          <span>标签文字（英文）</span>
+          <textarea id="text" rows="4" maxlength="500"
+            placeholder="例如：EXIT Door 2">EXIT Door 2</textarea>
+        </label>
+
+        <div class="grid-2">
+          <label class="field">
+            <span>板材宽度 (mm)</span>
+            <input id="plateWidth" type="number" min="1" step="0.5" value="100">
+          </label>
+          <label class="field">
+            <span>板材高度 (mm)</span>
+            <input id="plateHeight" type="number" min="1" step="0.5" value="50">
+          </label>
+          <label class="field">
+            <span>点距 (mm)</span>
+            <input id="dotSpacing" type="number" min="0.5" step="0.1" value="2.5">
+          </label>
+          <label class="field">
+            <span>行距 (mm)</span>
+            <input id="lineSpacing" type="number" min="1" step="0.5" value="10">
+          </label>
+        </div>
+
+        <details class="advanced">
+          <summary>高级设置</summary>
+          <div class="grid-2">
+            <label class="field">
+              <span>四周边距 (mm)</span>
+              <input id="margin" type="number" min="0" step="0.5" value="5">
+            </label>
+            <label class="field">
+              <span>字距 (mm，留空=1.4×点距)</span>
+              <input id="cellGap" type="number" min="0" step="0.1" placeholder="自动">
+            </label>
+            <label class="field">
+              <span>凸点直径 (mm，留空=0.6×点距)</span>
+              <input id="dotDiameter" type="number" min="0.1" step="0.1" placeholder="自动">
+            </label>
+          </div>
+        </details>
+
+        <div id="errors" class="errors" role="alert" hidden></div>
+
+        <div id="stats" class="stats" hidden></div>
+
+        <div class="actions">
+          <button id="downloadSvg" type="button" disabled>下载 SVG</button>
+          <button id="downloadJson" type="button" disabled>下载排版 JSON</button>
+        </div>
+
+        <section class="path-box" aria-label="压印路径（单标签）">
+          <h3>压印路径</h3>
+          <div class="grid-2">
+            <label class="field">
+              <span>起点 X (mm)</span>
+              <input id="pathStartX" type="number" step="0.5" value="0">
+            </label>
+            <label class="field">
+              <span>起点 Y (mm)</span>
+              <input id="pathStartY" type="number" step="0.5" value="0">
+            </label>
+          </div>
+          <div class="actions">
+            <button id="pathGenerate" type="button" class="btn-secondary">生成压印路径</button>
+            <button id="pathDownloadCsv" type="button" disabled>下载压印 CSV</button>
+          </div>
+          <div id="pathErrors" class="errors" role="alert" hidden></div>
+          <div id="pathStats" class="stats path-stats" hidden></div>
+          <p class="hint">以当前排版凸点为输入，从指定起点先用最近邻生成路线，再执行最多 20 轮 2-opt（每轮按起止下标顺序接受首个严格缩短的反转）；每个凸点恰好访问一次，点数上限 2000，参数非法时不输出部分路径。</p>
+        </section>
+      </section>
+
+      <!-- 右侧：实时预览 -->
+      <section class="panel preview-panel" aria-label="排版预览">
+        <div class="preview-head">
+          <h2>实时预览</h2>
+          <span id="brailleLine" class="braille-line" title="盲文 Unicode 对照"></span>
+        </div>
+        <div id="preview" class="preview">
+          <p class="placeholder">输入参数后此处显示带毫米坐标的凸点 SVG 预览</p>
+        </div>
+        <div id="pathPreviewWrap" class="path-preview-wrap" hidden>
+          <div class="preview-head">
+            <h2>压印路径预览</h2>
+            <span class="path-legend"><i class="swatch nn"></i>最近邻初始路线　<i class="swatch opt"></i>优化后路线（箭头为方向，数字为 step）</span>
+          </div>
+          <div id="pathPreview" class="preview path-preview"></div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ========== 多标签拼版模式 ========== -->
+    <section id="viewPanel" class="mode-view" hidden>
+      <!-- 左侧：标签与共享参数 -->
+      <section class="panel form-panel" aria-label="多标签拼版参数">
+        <label class="field">
+          <span>多条英文标签（每行一条，空行自动跳过）</span>
+          <textarea id="panelLabels" rows="7" maxlength="20000"
+            placeholder="例如：&#10;EXIT&#10;WOMEN&#10;MEN&#10;PULL&#10;PUSH">EXIT
+WOMEN
+MEN
+PULL
+PUSH</textarea>
+        </label>
+
+        <div class="grid-2">
+          <label class="field">
+            <span>板材宽度 (mm)</span>
+            <input id="panelPlateWidth" type="number" min="1" step="0.5" value="120">
+          </label>
+          <label class="field">
+            <span>板材高度 (mm)</span>
+            <input id="panelPlateHeight" type="number" min="1" step="0.5" value="80">
+          </label>
+          <label class="field">
+            <span>点距 (mm)</span>
+            <input id="panelDotSpacing" type="number" min="0.5" step="0.1" value="2.5">
+          </label>
+          <label class="field">
+            <span>行距 (mm)</span>
+            <input id="panelLineSpacing" type="number" min="1" step="0.5" value="10">
+          </label>
+        </div>
+
+        <details class="advanced">
+          <summary>高级设置</summary>
+          <div class="grid-2">
+            <label class="field">
+              <span>板材四周边距 (mm)</span>
+              <input id="panelMargin" type="number" min="0" step="0.5" value="5">
+            </label>
+            <label class="field">
+              <span>标签间距 (mm)</span>
+              <input id="panelLabelGap" type="number" min="0" step="0.5" value="5">
+            </label>
+            <label class="field">
+              <span>字距 (mm，留空=1.4×点距)</span>
+              <input id="panelCellGap" type="number" min="0" step="0.1" placeholder="自动">
+            </label>
+            <label class="field">
+              <span>凸点直径 (mm，留空=0.6×点距)</span>
+              <input id="panelDotDiameter" type="number" min="0.1" step="0.1" placeholder="自动">
+            </label>
+          </div>
+        </details>
+
+        <p class="hint-inline">每条标签按单行盲文生成<b>不可拆分矩形</b>，允许 <b>0°/90°</b> 旋转；装箱以剩余面积最小、再 y/x 稳定择优。任一标签放不下时只报原因、不输出部分版面。</p>
+
+        <div id="panelErrors" class="errors" role="alert" hidden></div>
+        <div id="panelStats" class="stats" hidden></div>
+
+        <div class="actions">
+          <button id="panelDownloadSvg" type="button" disabled>下载拼版 SVG</button>
+          <button id="panelDownloadJson" type="button" disabled>下载拼版 JSON</button>
+        </div>
+
+        <section class="path-box" aria-label="压印路径（拼版）">
+          <h3>压印路径</h3>
+          <div class="grid-2">
+            <label class="field">
+              <span>起点 X (mm)</span>
+              <input id="panelPathStartX" type="number" step="0.5" value="0">
+            </label>
+            <label class="field">
+              <span>起点 Y (mm)</span>
+              <input id="panelPathStartY" type="number" step="0.5" value="0">
+            </label>
+          </div>
+          <div class="actions">
+            <button id="panelPathGenerate" type="button" class="btn-secondary">生成压印路径</button>
+            <button id="panelPathDownloadCsv" type="button" disabled>下载压印 CSV</button>
+          </div>
+          <div id="panelPathErrors" class="errors" role="alert" hidden></div>
+          <div id="panelPathStats" class="stats path-stats" hidden></div>
+          <p class="hint">以当前拼版全部凸点为输入（保留标签索引决胜），从指定起点先最近邻、再最多 20 轮 2-opt；每个凸点恰好压印一次，点数上限 2000。</p>
+        </section>
+      </section>
+
+      <!-- 右侧：整板预览 -->
+      <section class="panel preview-panel" aria-label="多标签拼版预览">
+        <div class="preview-head">
+          <h2>整板预览</h2>
+          <span class="panel-legend" title="边界颜色表示旋转角">
+            <i class="swatch rot0"></i>0°
+            <i class="swatch rot90"></i>90°
+            <span class="muted">（框内 #n 为标签索引）</span>
+          </span>
+        </div>
+        <div id="panelPreview" class="preview">
+          <p class="placeholder">每行输入一条英文标签后，此处显示全部标签边界与凸点的整板预览</p>
+        </div>
+        <div id="panelPathPreviewWrap" class="path-preview-wrap" hidden>
+          <div class="preview-head">
+            <h2>压印路径预览</h2>
+            <span class="path-legend"><i class="swatch nn"></i>最近邻初始路线　<i class="swatch opt"></i>优化后路线（箭头为方向，数字为 step）</span>
+          </div>
+          <div id="panelPathPreview" class="preview path-preview"></div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ========== 压印质检模式 ========== -->
+    <section id="viewQc" class="mode-view" hidden>
+      <!-- 左侧：质检参数 -->
+      <section class="panel form-panel" aria-label="压印质检参数">
+        <div class="baseline-switch" role="group" aria-label="质检基准来源">
+          <button id="qcUseLayout" type="button" class="baseline-btn active" aria-pressed="true">单标签排版基准</button>
+          <button id="qcUsePanel" type="button" class="baseline-btn" aria-pressed="false">最近拼版基准</button>
+        </div>
+        <div id="qcBaseline" class="baseline"></div>
+
+        <label class="field">
+          <span>实测凸点 CSV（每行一个点：x_mm,y_mm，首行可含表头）</span>
+          <textarea id="qcCsv" rows="9" placeholder="x_mm,y_mm&#10;5.12,4.98&#10;10.95,7.55&#10;……"></textarea>
+        </label>
+
+        <div class="grid-2">
+          <label class="field">
+            <span>X 校准偏移 (mm)</span>
+            <input id="qcOffsetX" type="number" step="0.05" value="0">
+          </label>
+          <label class="field">
+            <span>Y 校准偏移 (mm)</span>
+            <input id="qcOffsetY" type="number" step="0.05" value="0">
+          </label>
+          <label class="field">
+            <span>校准旋转角 (°，逆时针为正)</span>
+            <input id="qcRotation" type="number" step="0.1" value="0">
+          </label>
+          <label class="field">
+            <span>合格公差 (mm)</span>
+            <input id="qcTolerance" type="number" min="0" step="0.05" value="0.5">
+          </label>
+          <label class="field">
+            <span>最大关联半径 (mm)</span>
+            <input id="qcMaxRadius" type="number" min="0" step="0.1" value="2">
+          </label>
+        </div>
+
+        <div class="calibrate">
+          <div class="grid-2">
+            <label class="field">
+              <span>X 最大校准量 (mm)</span>
+              <input id="qcMaxOffsetX" type="number" min="0" step="0.1" value="2">
+            </label>
+            <label class="field">
+              <span>Y 最大校准量 (mm)</span>
+              <input id="qcMaxOffsetY" type="number" min="0" step="0.1" value="2">
+            </label>
+            <label class="field">
+              <span>最大旋转角 (°，0=不搜角度)</span>
+              <input id="qcMaxAngle" type="number" min="0" max="15" step="0.1" value="0">
+            </label>
+            <label class="field">
+              <span>角度步长 (°)</span>
+              <input id="qcAngleStep" type="number" min="0" step="0.05" value="0.1">
+            </label>
+          </div>
+          <button id="qcAutoCalibrate" type="button" class="btn-secondary">一键自动校准（平移 / 小角度刚体）</button>
+          <p class="hint">在 [-最大旋转角, 最大旋转角] 内按步长枚举角度（含 0°），实测点先围绕板材中心旋转，再在 X/Y 限幅内枚举候选平移；每个「角度 × 平移」候选复用一对一匹配，按匹配数最多、总残差最小、旋转绝对值最小、|dx|+|dy| 最小决胜。最大旋转角留 0 时仅估平移（与旧版一致）。成功后自动写回角度与偏移并重跑；无有效候选时保留原参数（不使用质心差）。</p>
+          <div id="qcCalibMsg" class="calib-msg" role="status" hidden></div>
+        </div>
+
+        <div class="actions">
+          <button id="qcRun" type="button">开始质检</button>
+          <button id="qcDownloadCsv" type="button" disabled>下载质检报告 CSV</button>
+          <button id="qcDownloadSvg" type="button" disabled>下载叠加 SVG</button>
+        </div>
+
+        <div id="qcErrors" class="errors" role="alert" hidden></div>
+        <div id="qcStats" class="stats qc-stats" hidden></div>
+        <div class="legend" id="qcLegend" hidden>
+          <span><i class="dot pass"></i>合格</span>
+          <span><i class="dot offset"></i>偏移超差</span>
+          <span><i class="dot missing"></i>缺失</span>
+          <span><i class="dot extra"></i>多余</span>
+        </div>
+      </section>
+
+      <!-- 右侧：叠加预览 -->
+      <section class="panel preview-panel" aria-label="质检叠加预览">
+        <div class="preview-head">
+          <h2>质检叠加图</h2>
+          <span class="braille-line" title="图例">○ 设计点　◆ 刚体校准（旋转+平移）后实测点</span>
+        </div>
+        <div id="qcPreview" class="preview">
+          <p class="placeholder">先在「排版模式」或「多标签拼版」完成一次成功结果并选为基准，再粘贴实测 CSV 后点击「开始质检」</p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <footer>
+    <p>转换规则：大写字母前加大写前缀 ⠠；连续数字段仅在段首加一个数字前缀 ⠼；按盲文单元整词换行，放不下时给出原因，绝不裁切。点阵解码为其逆过程：按同一字符表还原英文、大小写前缀与连续数字段，保留空白与标点，未知字符逐个给出位置、码点与原因，绝不静默丢弃。质检比较时实测点先围绕板材中心做小角度刚体旋转、再应用校准偏移，然后在关联半径内做一对一最优匹配。</p>
+  </footer>
+
+  <script src="../lib/braille.js"></script>
+  <script src="../lib/panel.js"></script>
+  <script src="../lib/qc.js"></script>
+  <script src="../lib/path.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
