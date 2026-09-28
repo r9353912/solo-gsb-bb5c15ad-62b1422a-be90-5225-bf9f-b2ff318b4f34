@@ -252,6 +252,106 @@ test('POST /api/decode 非字符串输入返回 bad-input', async () => {
   assert.equal(r.json.errors[0].type, 'bad-input');
 });
 
+test('POST /api/panel/cut 成功拼版：成品边/刀心线四角坐标、最大留边、CSV/SVG', async () => {
+  const panel = await postJson('/api/panel', { labels: 'EXIT\nWOMEN\nMEN', plateWidth: 120, plateHeight: 80 });
+  assert.equal(panel.json.ok, true);
+  const r = await postJson('/api/panel/cut', {
+    labels: panel.json.labels,
+    plateWidth: 120, plateHeight: 80,
+    margin: 1, toolRadius: 0.5
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.cuts.length, 3);
+  assert.equal(r.json.maxMargin, 1.25);
+  assert.equal(r.json.stats.marginHeadroom, 0.25);
+  // 成品边/刀心线矩形 + 四角
+  const c1 = r.json.cuts[0];
+  assert.equal(c1.label, 1);
+  assert.equal(c1.text, 'EXIT');
+  assert.deepEqual(Object.keys(c1.finish.corners), ['tl', 'tr', 'br', 'bl']);
+  assert.equal(c1.tool.left, c1.finish.left - 0.5);
+  // 刀心线不出板
+  r.json.cuts.forEach(c => {
+    assert.ok(c.tool.left >= 0 - 1e-9 && c.tool.top >= 0 - 1e-9);
+    assert.ok(c.tool.right <= 120 + 1e-9 && c.tool.bottom <= 80 + 1e-9);
+  });
+  // SVG 三层 + 编号
+  assert.match(r.json.svg, /class="cut-finish"/);
+  assert.match(r.json.svg, /class="cut-tool"/);
+  assert.match(r.json.svg, /class="cut-envelope"/);
+  assert.match(r.json.svg, /data-label-count="3"/);
+  // CSV 表头 19 列 + 每标签一行
+  const lines = r.json.csv.replace(/^﻿/, '').split('\r\n');
+  assert.equal(lines[0].split(',').length, 19);
+  assert.match(lines[0], /finish_tl_x_mm/);
+  assert.match(lines[0], /tool_bl_y_mm/);
+  assert.match(lines[1], /^1,EXIT,0,/);
+  assert.equal(lines.length, 4);
+});
+
+test('POST /api/panel/cut 旋转 90° 拼版按全局坐标计算', async () => {
+  const panel = await postJson('/api/panel', { labels: 'bbcdefghijklmno', plateWidth: 95, plateHeight: 100 });
+  assert.equal(panel.json.ok, true);
+  assert.equal(panel.json.labels[0].rotation, 90);
+  const r = await postJson('/api/panel/cut', {
+    labels: panel.json.labels,
+    plateWidth: 95, plateHeight: 100,
+    margin: 2, toolRadius: 1
+  });
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.maxMargin, 3.25);
+  assert.equal(r.json.cuts[0].rotation, 90);
+  assert.match(r.json.svg, /⟳90°/);
+});
+
+test('POST /api/panel/cut 留边超限：ok=false 且指出限制的标签对/板边，无部分刀路', async () => {
+  const panel = await postJson('/api/panel', { labels: 'EXIT\nWOMEN\nMEN', plateWidth: 120, plateHeight: 80 });
+  const r = await postJson('/api/panel/cut', {
+    labels: panel.json.labels,
+    plateWidth: 120, plateHeight: 80,
+    margin: 3, toolRadius: 0.5
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.maxMargin, 1.25);
+  assert.deepEqual(r.json.cuts, []);
+  assert.equal(r.json.svg, null);
+  assert.equal(r.json.csv, null);
+  const pair = r.json.errors.find(e => e.type === 'label-pair-limit');
+  assert.ok(pair);
+  assert.deepEqual([pair.labelA, pair.labelB], [1, 3]);
+  assert.match(pair.message, /1\.25 mm/);
+
+  // 板边限制
+  const p2 = await postJson('/api/panel', { labels: 'ab', plateWidth: 20, plateHeight: 15, margin: 5 });
+  const e2 = await postJson('/api/panel/cut', {
+    labels: p2.json.labels, plateWidth: 20, plateHeight: 15,
+    margin: 3, toolRadius: 2
+  });
+  assert.equal(e2.json.ok, false);
+  assert.ok(e2.json.errors.some(e => e.type === 'plate-edge-limit'));
+  assert.equal(e2.json.cuts.length, 0);
+});
+
+test('POST /api/panel/cut 参数非法明确报错（负留边/刀径非正/缺标签）', async () => {
+  const panel = await postJson('/api/panel', { labels: 'ab', plateWidth: 120, plateHeight: 80 });
+  async function expectFail(payload, re) {
+    const r = await postJson('/api/panel/cut', Object.assign({
+      labels: panel.json.labels, plateWidth: 120, plateHeight: 80
+    }, payload));
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.svg, null);
+    assert.equal(r.json.csv, null);
+    assert.ok(r.json.errors.some(e => re.test(e.message)));
+  }
+  await expectFail({ margin: -1, toolRadius: 0.5 }, /留边不能为负/);
+  await expectFail({ margin: 1, toolRadius: 0 }, /刀具半径必须为正数/);
+  await expectFail({ margin: 1, toolRadius: 0.5, plateWidth: -1 }, /板材宽度/);
+  const noLabels = await postJson('/api/panel/cut', { plateWidth: 120, plateHeight: 80, margin: 1, toolRadius: 0.5 });
+  assert.equal(noLabels.json.ok, false);
+  assert.match(noLabels.json.errors[0].message, /labels/);
+});
+
 test('GET /api/health 健康检查正常', async () => {  const r = await new Promise((resolve, reject) => {
     http.get(baseUrl + '/api/health', res => {
       let data = '';
@@ -277,6 +377,9 @@ test('静态资源：/lib/panel.js 与首页可访问', async () => {
   const pathLib = await fetchText('/lib/path.js');
   assert.equal(pathLib.status, 200);
   assert.match(pathLib.body, /planPath/);
+  const cutLib = await fetchText('/lib/cut.js');
+  assert.equal(cutLib.status, 200);
+  assert.match(cutLib.body, /planCuts/);
   const page = await fetchText('/');
   assert.equal(page.status, 200);
   assert.match(page.body, /tabPanel/);
@@ -284,4 +387,6 @@ test('静态资源：/lib/panel.js 与首页可访问', async () => {
   assert.match(page.body, /点阵解码/);
   assert.match(page.body, /\/api\/decode|decodeInput/);
   assert.match(page.body, /压印路径/);
+  assert.match(page.body, /拼版裁切线/);
+  assert.match(page.body, /panelCutGenerate/);
 });

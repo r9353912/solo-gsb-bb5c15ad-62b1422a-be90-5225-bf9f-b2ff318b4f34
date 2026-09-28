@@ -7,6 +7,7 @@
  *   POST /api/qc             压印质检
  *   POST /api/qc/calibrate   质检自动校准
  *   POST /api/path           压印路径（最近邻 + 2-opt，输出逐点作业顺序 / CSV / 叠加 SVG）
+ *   POST /api/panel/cut      拼版裁切线（凸点包络 -> 成品边 -> 刀心线，最大统一留边 / 超限定位 / CSV / 叠加 SVG）
  */
 'use strict';
 
@@ -16,6 +17,7 @@ const Braille = require('./lib/braille');
 const QC = require('./lib/qc');
 const Panel = require('./lib/panel');
 const EmbossPath = require('./lib/path');
+const PanelCut = require('./lib/cut');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -120,6 +122,22 @@ app.post('/api/path', (req, res) => {
     startY: body.startY,
     plateWidth: body.plateWidth,
     plateHeight: body.plateHeight
+  });
+  res.json(result);
+});
+
+// 拼版裁切线接口：复用最近一次成功拼版的 labels（全局凸点/编号/旋转角）与板材尺寸，
+// 输入最小留边 margin 与刀具半径 toolRadius，按凸点包络外扩留边生成成品边、再外扩刀径
+// 得到刀心线；计算整版最大统一留边（板边 + 标签间刀具占位共同约束），超限或留边 0
+// 也放不下时只报限制它的板边/标签对，不输出部分刀路；可行时返回 cuts/四角坐标/叠加 SVG/CSV
+app.post('/api/panel/cut', (req, res) => {
+  const body = req.body || {};
+  const result = PanelCut.planCuts({
+    labels: body.labels,
+    plateWidth: body.plateWidth,
+    plateHeight: body.plateHeight,
+    margin: body.margin != null ? body.margin : body.minMargin,
+    toolRadius: body.toolRadius
   });
   res.json(result);
 });

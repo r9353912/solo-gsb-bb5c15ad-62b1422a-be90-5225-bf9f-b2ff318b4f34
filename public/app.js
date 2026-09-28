@@ -271,8 +271,9 @@
   function handlePanelResult(r) {
     if (r.ok) {
       lastPanel = r;
-      // 拼版结果已变化：旧压印路径与新凸点集不再对应，作废待重新生成
+      // 拼版结果已变化：旧压印路径与旧裁切线与新凸点集不再对应，作废待重新生成
       invalidatePanelPath();
+      invalidateCut();
       // 质检拼版基准：记录最近一次成功拼版（含时间戳、标签索引/旋转角与带元数据的全局 dots）
       lastPanelBaseline = {
         time: fmtTime(new Date()),
@@ -294,6 +295,7 @@
     } else {
       lastPanel = null;
       invalidatePanelPath();
+      invalidateCut();
       panelStatsBox.hidden = true;
       renderPanelErrors(r.errors || [{ message: '未知错误' }]);
       btnPanelSvg.disabled = true;
@@ -813,6 +815,162 @@
   function invalidatePanelPath() {
     panelPathTool.invalidate('拼版参数已变化，请重新点击「生成压印路径」');
   }
+
+  /* ================= 拼版裁切线 ================= */
+
+  var cutMarginEl = document.getElementById('panelCutMargin');
+  var cutRadiusEl = document.getElementById('panelCutToolRadius');
+  var cutGenBtn = document.getElementById('panelCutGenerate');
+  var cutCsvBtn = document.getElementById('panelCutDownloadCsv');
+  var cutSvgBtn = document.getElementById('panelCutDownloadSvg');
+  var cutErrorsBox = document.getElementById('panelCutErrors');
+  var cutStatsBox = document.getElementById('panelCutStats');
+  var cutPreviewWrap = document.getElementById('panelCutPreviewWrap');
+  var cutPreview = document.getElementById('panelCutPreview');
+
+  var cutTimer = null;
+  var lastCut = null; // 最近一次成功裁切线结果（用于下载 / 预览）
+
+  function renderCutErrors(errors) {
+    cutErrorsBox.innerHTML = '';
+    var ul = document.createElement('ul');
+    errors.forEach(function (e) {
+      var li = document.createElement('li');
+      li.textContent = e.message;
+      ul.appendChild(li);
+    });
+    cutErrorsBox.appendChild(ul);
+    cutErrorsBox.hidden = false;
+  }
+
+  // 用中文描述“决定最大留边的最紧约束”（binding 已按 limit 升序，取第一项）
+  function describeBinding(c) {
+    if (!c) return '—';
+    if (c.kind === 'plate') {
+      var edgeName = { left: '左板边', right: '右板边', top: '上板边', bottom: '下板边' }[c.edge] || c.edge;
+      return '标签 #' + c.label + ' 到' + edgeName + '（包络距板边 ' + c.distMm + ' mm）';
+    }
+    return '标签对 #' + c.labelA + ' ↔ #' + c.labelB +
+      '（包络净间距 x=' + c.gapXMm + ' / y=' + c.gapYMm + ' mm）';
+  }
+
+  function renderCutStats(r) {
+    var s = r.stats;
+    var tight = (r.binding || [])[0];
+    var feasible = s.maxMargin >= 0;
+    cutStatsBox.innerHTML =
+      (feasible
+        ? '整版允许的最大统一留边为 <b>' + s.maxMargin + '</b> mm，当前留边 <b>' + s.margin +
+          '</b> mm（余量 <b class="' + (s.marginHeadroom <= 0.05 ? 'saved' : '') + '">' +
+          s.marginHeadroom + '</b> mm，刀具半径 ' + s.toolRadius + ' mm）<br>'
+        : '整版允许的最大统一留边为 <b>' + s.maxMargin + '</b> mm（小于 0，留边 0 也放不下）<br>') +
+      '共 <b>' + s.labelCount + '</b> 条标签；最紧约束：' + describeBinding(tight) +
+      '（达到该上限的约束共 ' + s.bindingCount + ' 条）';
+    cutStatsBox.hidden = false;
+  }
+
+  function invalidateCut() {
+    lastCut = null;
+    clearTimeout(cutTimer);
+    cutCsvBtn.disabled = true;
+    cutSvgBtn.disabled = true;
+    cutStatsBox.hidden = true;
+    cutErrorsBox.hidden = true;
+    cutPreviewWrap.hidden = true;
+    cutPreview.innerHTML = '<p class="placeholder">拼版参数已变化，请重新点击「生成裁切线」</p>';
+  }
+
+  function handleCutResult(r) {
+    if (r.ok) {
+      lastCut = r;
+      cutErrorsBox.hidden = true;
+      cutPreviewWrap.hidden = false;
+      cutPreview.innerHTML = r.svg.replace(/^<\?xml[^?]*\?>\s*/, '');
+      renderCutStats(r);
+      cutCsvBtn.disabled = false;
+      cutSvgBtn.disabled = false;
+    } else {
+      lastCut = null;
+      cutCsvBtn.disabled = true;
+      cutSvgBtn.disabled = true;
+      cutPreviewWrap.hidden = true;
+      // 超限时仍展示“最大统一留边 + 最紧约束”，帮助用户直接改成可行值
+      if (r.stats || r.maxMargin != null) {
+        var mVal = r.params ? r.params.margin : null;
+        var statsView = {
+          stats: r.stats || {
+            labelCount: r.labelCount, maxMargin: r.maxMargin, bindingCount: (r.binding || []).length,
+            margin: mVal, toolRadius: r.params ? r.params.toolRadius : null,
+            marginHeadroom: (mVal != null ? Math.round((r.maxMargin - mVal) * 1000) / 1000 : null)
+          },
+          binding: r.binding
+        };
+        renderCutStats(statsView);
+      } else {
+        cutStatsBox.hidden = true;
+      }
+      renderCutErrors(r.errors || [{ message: '未知错误' }]);
+    }
+  }
+
+  function runCut() {
+    if (!lastPanel || !lastPanel.labels || !lastPanel.labels.length) {
+      handleCutResult({ ok: false, errors: [{ message: '请先完成一次成功的多标签拼版，再生成裁切线。' }] });
+      return;
+    }
+    var m = cutMarginEl.value.trim();
+    var tr = cutRadiusEl.value.trim();
+    if (m === '' || !isFinite(Number(m)) || Number(m) < 0) {
+      handleCutResult({ ok: false, errors: [{ message: '最小留边必须填写为不小于 0 的数字（mm）。' }] });
+      return;
+    }
+    if (tr === '' || !(Number(tr) > 0)) {
+      handleCutResult({ ok: false, errors: [{ message: '刀具半径必须填写为正数（mm）。' }] });
+      return;
+    }
+    var payload = {
+      labels: lastPanel.labels,
+      plateWidth: lastPanel.params.plateWidth,
+      plateHeight: lastPanel.params.plateHeight,
+      margin: Number(m),
+      toolRadius: Number(tr)
+    };
+    fetch('/api/panel/cut', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(function (res) { return res.json(); })
+      .then(handleCutResult)
+      .catch(function () {
+        // 服务不可用时回退到浏览器内置同构实现
+        if (window.PanelCut) {
+          try {
+            handleCutResult(PanelCut.planCuts(payload));
+          } catch (e) {
+            handleCutResult({ ok: false, errors: [{ message: '裁切线计算失败：' + e.message }] });
+          }
+        } else {
+          handleCutResult({ ok: false, errors: [{ message: '网络请求失败，请确认服务已启动。' }] });
+        }
+      });
+  }
+
+  cutGenBtn.addEventListener('click', runCut);
+  cutCsvBtn.addEventListener('click', function () {
+    if (lastCut) download('panel-cut-lines.csv', 'text/csv;charset=utf-8', lastCut.csv);
+  });
+  cutSvgBtn.addEventListener('click', function () {
+    if (lastCut) download('panel-cut-lines.svg', 'image/svg+xml;charset=utf-8', lastCut.svg);
+  });
+  // 修改留边/刀径且已有裁切结果时防抖重算；尚未生成过时不自动请求
+  [cutMarginEl, cutRadiusEl].forEach(function (el) {
+    el.addEventListener('input', function () {
+      if (!lastCut) return;
+      clearTimeout(cutTimer);
+      cutTimer = setTimeout(runCut, 300);
+    });
+  });
 
   /* ================= 点阵解码模式 ================= */
 
