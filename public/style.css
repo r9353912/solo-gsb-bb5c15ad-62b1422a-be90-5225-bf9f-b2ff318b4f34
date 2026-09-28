@@ -484,3 +484,21 @@ footer {
 }
 .path-legend .swatch.nn { border-top: 2px dashed #9ca3af; }
 .path-legend .swatch.opt { border-top: 3px solid #2563eb; }
+
+/* 拼版裁切线 */
+.cut-box .actions button { font-size: 13px; }
+.path-legend .swatch.cut-env { border-top: 2px dashed #ca8a04; }
+.path-legend .swatch.cut-finish { border-top: 3px solid #2563eb; }
+.path-legend .swatch.cut-tool { border-top: 3px solid #dc2626; }
+.cut-preview svg { max-height: 75vh; }
+.cut-stats .cut-maxmargin,
+.path-stats .cut-maxmargin { color: #b45309; }
+#panelCutErrors li.cut-binding {
+  font-weight: 700;
+  list-style: none;
+}
+#panelCutErrors li.cut-binding::before {
+  content: "⛔ 最紧约束：";
+  font-weight: 700;
+}
+#panelCutErrors li { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }

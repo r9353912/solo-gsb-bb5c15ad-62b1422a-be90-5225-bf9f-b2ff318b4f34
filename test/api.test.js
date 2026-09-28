@@ -205,6 +205,79 @@ test('POST /api/path 参数非法（缺起点/空 dots/坐标非法）明确报�
   assert.ok(badDot.json.errors.some(e => /第 1 个凸点坐标非法/.test(e.message)));
 });
 
+test('POST /api/panel/cut 可行：返回三层矩形/最大统一留边/四角 CSV/叠加 SVG', async () => {
+  const panel = await postJson('/api/panel', { labels: 'EXIT\nWOMEN\nMEN', plateWidth: 120, plateHeight: 80 });
+  assert.equal(panel.json.ok, true);
+  const r = await postJson('/api/panel/cut', {
+    labels: panel.json.labels,
+    plateWidth: 120, plateHeight: 80,
+    minMargin: 0.5, toolRadius: 0.5
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.labelCount, 3);
+  assert.equal(r.json.maxMargin, 1.25);
+  assert.equal(r.json.labels.length, 3);
+  assert.ok(r.json.labels.every(l => l.corners.length === 4));
+  assert.equal(r.json.binding.kind, 'pair');
+  // CSV：表头 + 3 标签 × 2 行
+  const lines = r.json.csv.replace(/^﻿/, '').split('\r\n');
+  assert.equal(lines[0], 'label_index,rotation_deg,rect,corner_tl_x_mm,corner_tl_y_mm,corner_tr_x_mm,corner_tr_y_mm,corner_br_x_mm,corner_br_y_mm,corner_bl_x_mm,corner_bl_y_mm');
+  assert.equal(lines.length, 7);
+  // SVG 含三种矩形 class 与标签编号
+  assert.match(r.json.svg, /class="cut-tool-center"/);
+  assert.match(r.json.svg, /class="cut-finish"/);
+  assert.match(r.json.svg, /class="cut-envelope"/);
+  assert.match(r.json.svg, /data-label-index="3"/);
+});
+
+test('POST /api/panel/cut 支持顶层 dots 分组；旋转标签按全局坐标', async () => {
+  const panel = await postJson('/api/panel', { labels: 'bbcdefghijklmno', plateWidth: 95, plateHeight: 100 });
+  assert.equal(panel.json.labels[0].rotation, 90);
+  const r = await postJson('/api/panel/cut', {
+    dots: panel.json.dots,
+    plateWidth: 95, plateHeight: 100,
+    minMargin: 1, toolRadius: 0.5
+  });
+  assert.equal(r.json.ok, true);
+  assert.deepEqual(r.json.labels[0].envelope, { x: 4.25, y: 4.25, width: 6.5, height: 88 });
+  assert.equal(r.json.binding.kind, 'plate');
+  assert.equal(r.json.binding.side, 'left');
+});
+
+test('POST /api/panel/cut 留边超限：ok=false 指出板边/标签对，不输出部分刀路', async () => {
+  const panel = await postJson('/api/panel', { labels: 'EXIT\nWOMEN\nMEN', plateWidth: 120, plateHeight: 80 });
+  const r = await postJson('/api/panel/cut', {
+    labels: panel.json.labels,
+    plateWidth: 120, plateHeight: 80,
+    minMargin: 5, toolRadius: 1
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.maxMargin, 0.75);
+  assert.equal(r.json.labels.length, 0);
+  assert.equal(r.json.svg, null);
+  assert.equal(r.json.csv, null);
+  assert.equal(r.json.errors[0].binding, true);
+  assert.equal(r.json.errors[0].type, 'label-pair-limit');
+  assert.deepEqual([r.json.errors[0].labelA, r.json.errors[0].labelB], [1, 3]);
+  assert.ok(r.json.errors.some(e => e.type === 'plate-edge-limit'));
+});
+
+test('POST /api/panel/cut 参数非法（负留边/缺拼版数据）明确报错', async () => {
+  const panel = await postJson('/api/panel', { labels: 'a', plateWidth: 120, plateHeight: 80 });
+  const neg = await postJson('/api/panel/cut', {
+    labels: panel.json.labels, plateWidth: 120, plateHeight: 80,
+    minMargin: -1, toolRadius: 0.5
+  });
+  assert.equal(neg.json.ok, false);
+  assert.equal(neg.json.csv, null);
+  assert.ok(neg.json.errors.some(e => /最小留边/.test(e.message)));
+
+  const empty = await postJson('/api/panel/cut', { plateWidth: 120, plateHeight: 80, minMargin: 1, toolRadius: 0.5 });
+  assert.equal(empty.json.ok, false);
+  assert.equal(empty.json.errors[0].type, 'no-panel');
+});
+
 test('POST /api/decode 成功解码：decodedText/cells/errors 完整', async () => {
   const res = await postJson('/api/decode', { text: '⠠⠑⠠⠭⠀⠼⠃' });
   assert.equal(res.status, 200);
@@ -277,6 +350,9 @@ test('静态资源：/lib/panel.js 与首页可访问', async () => {
   const pathLib = await fetchText('/lib/path.js');
   assert.equal(pathLib.status, 200);
   assert.match(pathLib.body, /planPath/);
+  const cutLib = await fetchText('/lib/cut.js');
+  assert.equal(cutLib.status, 200);
+  assert.match(cutLib.body, /planCuts/);
   const page = await fetchText('/');
   assert.equal(page.status, 200);
   assert.match(page.body, /tabPanel/);
@@ -284,4 +360,6 @@ test('静态资源：/lib/panel.js 与首页可访问', async () => {
   assert.match(page.body, /点阵解码/);
   assert.match(page.body, /\/api\/decode|decodeInput/);
   assert.match(page.body, /压印路径/);
+  assert.match(page.body, /拼版裁切线/);
+  assert.match(page.body, /\/lib\/cut\.js/);
 });

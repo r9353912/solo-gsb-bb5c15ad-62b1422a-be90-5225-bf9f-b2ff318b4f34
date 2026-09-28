@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>盲文标签排版台</h1>
-    <p class="subtitle">六点一级盲文 · 点阵解码 · 整词换行单标签排版 · 多标签行级拼版（0/90° 旋转） · 毫米坐标凸点 SVG · 压印路径（最近邻 + 2-opt） · 压印质检</p>
+    <p class="subtitle">六点一级盲文 · 点阵解码 · 整词换行单标签排版 · 多标签行级拼版（0/90° 旋转） · 毫米坐标凸点 SVG · 压印路径（最近邻 + 2-opt） · 拼版裁切线（包络/成品边/刀心线） · 压印质检</p>
     <nav class="mode-tabs" role="tablist" aria-label="工作模式">
       <button id="tabDecode" class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="decode">点阵解码</button>
       <button id="tabLayout" class="mode-tab active" type="button" role="tab" aria-selected="true" data-mode="layout">排版模式</button>
@@ -245,6 +245,31 @@ PUSH</textarea>
           <div id="panelPathStats" class="stats path-stats" hidden></div>
           <p class="hint">以当前拼版全部凸点为输入（保留标签索引决胜），从指定起点先最近邻、再最多 20 轮 2-opt；每个凸点恰好压印一次，点数上限 2000。</p>
         </section>
+
+        <section class="path-box cut-box" aria-label="拼版裁切线">
+          <h3>拼版裁切线</h3>
+          <div class="grid-2">
+            <label class="field">
+              <span>最小留边 (mm，凸点到成品边)</span>
+              <input id="panelCutMargin" type="number" min="0" step="0.1" value="0.5">
+            </label>
+            <label class="field">
+              <span>刀具半径 (mm)</span>
+              <input id="panelCutToolRadius" type="number" min="0" step="0.1" value="0.5">
+            </label>
+          </div>
+          <div class="actions">
+            <button id="panelCutGenerate" type="button" class="btn-secondary">生成裁切线</button>
+            <button id="panelCutMax" type="button" class="btn-secondary" disabled title="把留边设为整版允许的最大值">取最大留边</button>
+          </div>
+          <div class="actions" style="margin-top:8px">
+            <button id="panelCutDownloadCsv" type="button" disabled>下载裁切线 CSV</button>
+            <button id="panelCutDownloadSvg" type="button" disabled>下载裁切线 SVG</button>
+          </div>
+          <div id="panelCutErrors" class="errors" role="alert" hidden></div>
+          <div id="panelCutStats" class="stats path-stats" hidden></div>
+          <p class="hint">复用当前成功拼版的每条标签全局凸点、编号与板材尺寸：按“凸点中心+凸点半径”形成包络，外扩<b>最小留边</b>生成各标签矩形成品边，再外扩<b>刀具半径</b>得到刀心线（旋转标签也按全局坐标计算）。整版最大统一留边受板材边缘与标签之间刀具占位共同约束；输入留边超限时指出限制它的板边或标签对，<b>不输出部分刀路</b>。CSV 含标签编号与刀心线四角毫米坐标。</p>
+        </section>
       </section>
 
       <!-- 右侧：整板预览 -->
@@ -266,6 +291,18 @@ PUSH</textarea>
             <span class="path-legend"><i class="swatch nn"></i>最近邻初始路线　<i class="swatch opt"></i>优化后路线（箭头为方向，数字为 step）</span>
           </div>
           <div id="panelPathPreview" class="preview path-preview"></div>
+        </div>
+        <div id="panelCutPreviewWrap" class="path-preview-wrap" hidden>
+          <div class="preview-head">
+            <h2>裁切线叠加预览</h2>
+            <span class="path-legend">
+              <i class="swatch cut-env"></i>凸点包络
+              <i class="swatch cut-finish"></i>成品边
+              <i class="swatch cut-tool"></i>刀心线
+              <span class="muted">（红色数字为刀心线四角 mm 坐标）</span>
+            </span>
+          </div>
+          <div id="panelCutPreview" class="preview path-preview cut-preview"></div>
         </div>
       </section>
     </section>
@@ -369,6 +406,7 @@ PUSH</textarea>
   <script src="../lib/panel.js"></script>
   <script src="../lib/qc.js"></script>
   <script src="../lib/path.js"></script>
+  <script src="../lib/cut.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

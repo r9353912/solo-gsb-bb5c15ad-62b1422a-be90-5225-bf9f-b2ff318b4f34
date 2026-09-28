@@ -8,6 +8,7 @@
 - **单标签排版**：依据转换后的盲文单元**整词换行**，词间空一个空白单元
 - 任何单词放不下、或总行数超出板材容量时，**明确指出原因，绝不裁切**
 - **多标签拼版**：多行标签逐条复用同一套盲文转换，每条作为**不可拆分矩形**做带边距的二维行级装箱，允许 **0°/90° 旋转**，按**剩余面积最小 → y → x → 0°** 稳定择优；任一标签放不下时逐条给出原因且不输出部分版面
+- **拼版裁切线**：复用一次**成功拼版**的每条标签全局凸点、编号与板材尺寸，输入**凸点到成品边的最小留边**与**刀具半径**——按“凸点中心 + 凸点半径”形成包络，外扩留边生成各标签**矩形成品边**、再外扩刀具半径得到**刀心线**（旋转标签也按全局坐标计算）；系统计算受**板材边缘**与**标签之间刀具占位**共同约束的**整版最大统一留边**，输入留边超限时逐条指出限制它的板边或标签对、**不输出部分刀路**；可行时在拼版预览上**叠加裁切线**并导出含**标签编号与刀心线四角毫米坐标**的 **CSV 与 SVG**
 - 页面实时预览带毫米（mm）坐标的凸点 SVG（拼版同时画出**每个标签的边界与索引/旋转角**），并可下载 **SVG** 与**排版 JSON**（含标签索引与旋转角）
 - **压印路径**：单标签排版或多标签拼版成功后，指定压印起点 (X/Y mm) 即可生成压印机逐点作业顺序——先以**最近邻**从起点走出初始路线，再执行**最多 20 轮 2-opt**（每轮按反转段起止下标顺序接受首个**严格缩短**的反转）；同距离时按**标签索引 → 点坐标 (x,y) → 原序号**稳定决胜，相同输入结果严格一致，**每个凸点恰好访问一次**。界面显示优化前/后空移总长与节省比例，叠加预览画出带 step 序号与方向箭头的路径，可下载含 `step,label,x_mm,y_mm,travel_mm` 的 CSV；**点数超过 2000 或参数非法时明确报错，不输出部分路径**
 - **压印质检**：粘贴实测凸点 CSV、设置校准旋转角/偏移/合格公差/关联半径，叠加 SVG 区分四类结果并下载质检报告 CSV；质检页可一键选择**最近一次成功的单标签排版或多标签拼版**作为基准——拼版基准显示标签数量及各标签索引/旋转角，请求直接使用拼版返回的顶层 `dots`（保留 `label`、`rotation` 元数据），叠加图与 CSV 报告会标注每个结果所属标签；尚无成功拼版时拼版基准按钮禁用并提示先完成拼版
@@ -19,15 +20,15 @@
 docker compose up --build
 ```
 
-Compose 会在构建镜像时自动完成依赖安装与初始化。启动后在浏览器访问：
+Compose 会在构建镜像时自动完成依赖安装与初始化。启动后**页面与全部 HTTP API 均在 3000 端口**，浏览器访问：
 
-**http://localhost:3000** （容器内外端口均为 `3000`）
+**http://localhost:3000** （容器内外端口均为 `3000`；API 前缀同为 `http://localhost:3000/api/...`）
 
 页面顶部四个页签即为入口：
 
 - **点阵解码**（顶部「点阵解码」页签）：粘贴六点盲文 Unicode 字符串，即时还原英文文本、显示逐单元（cells）对照；未知字符逐个列出位置/码点/原因，点击错误可在输入框定位，「**复制解码结果**」一键复制 `decodedText`；
 - **排版模式**（`http://localhost:3000/`，默认页签）：单标签盲文转换、整词换行排版与 SVG/JSON 下载；左侧表单底部「**压印路径**」区域可直接对当前排版凸点生成逐点作业顺序；
-- **多标签拼版**：点击顶部「**多标签拼版**」页签，每行输入一条英文标签，整板预览标签边界与凸点，下载含标签索引/旋转角的 SVG/JSON；左侧同样内置「**压印路径**」区域，可对整板全部凸点（带标签索引）生成路径；
+- **多标签拼版**：点击顶部「**多标签拼版**」页签，每行输入一条英文标签，整板预览标签边界与凸点，下载含标签索引/旋转角的 SVG/JSON；左侧内置「**压印路径**」与「**拼版裁切线**」两个区域，可分别对整板全部凸点生成路径、对成功拼版生成裁切线；
 - **压印质检**：点击顶部「**压印质检**」页签进入，通过左侧「单标签排版基准 / 最近拼版基准」按钮选择当前会话中最近一次成功的单标签排版或多标签拼版作为质检基准。
 
 停止：`docker compose down`
@@ -135,6 +136,43 @@ npm test           # 运行转换/排版/质检单元测试（node:test）
 - 「**下载压印 CSV**」为 UTF-8 BOM（Excel 可直接打开）、CRLF 行尾，表头固定为 **`step,label,x_mm,y_mm,travel_mm`**：`step` 从 1 连续编号，`label` 为拼版点所属标签索引（单标签路径留空），`x_mm/y_mm` 为凸点毫米坐标，`travel_mm` 为上一位置到该点的空移距离（第 1 行 = 起点到首点）。
 
 约束与报错：单次路径凸点数**上限 2000**（超过即报 `超过单次压印路径 2000 个上限`）；起点必须为数字、凸点坐标必须合法（逐个定位到第几个点）；任一条件不满足时 `ok=false`，`steps/svg/csv` 全部为空——**绝不输出部分路径**。
+
+## 拼版裁切线模式
+
+在「**多标签拼版**」页签完成一次**成功拼版**后，左侧表单底部的「**拼版裁切线**」区域即可使用（拼版失败或参数变化时旧裁切线立即作废，避免刀路与凸点错位）。输入两个参数：
+
+| 参数 | 含义 | 默认值 |
+| --- | --- | --- |
+| 最小留边 (mm) | 凸点（含凸点半径的包络）到**矩形成品边**的最小距离，非负 | 0.5 |
+| 刀具半径 (mm) | 切割刀具半径，成品边再外扩该值得到**刀心线**（刀具中心轨迹），非负 | 0.5 |
+
+点击「**生成裁切线**」（修改参数且已有结果时自动防抖重算）；「**取最大留边**」一键把留边设为整版允许的最大值并重算。
+
+三层矩形（每条标签都在**板材全局坐标系**中直接计算——90° 旋转标签使用的是旋转后的全局凸点，不做反向旋转）：
+
+1. **凸点包络 envelope**：该标签全部 `(凸点中心 x/y, 凸点半径 r)` 的轴对齐包围盒，即四边取 `min(x−r) / max(x+r) / min(y−r) / max(y+r)`；
+2. **成品边 finish_edge**：包络四边整体**外扩最小留边** `m`；
+3. **刀心线 tool_center**：成品边四边再整体**外扩刀具半径** `R`（等价于包络外扩 `m + R`），矩形四角即下刀中心的毫米坐标。
+
+**整版最大统一留边 `maxMargin`** 取以下全部约束的最小值：
+
+- **板材边缘**（每条标签 4 条）：刀心线必须落在板材内——
+  左/上 `m ≤ env.x0 − R`、`m ≤ env.y0 − R`，右/下 `m ≤ W − env.x1 − R`、`m ≤ H − env.y1 − R`；
+- **标签对刀具占位**（每对标签一条）：设两个凸点包络在 x、y 轴上的净间距为 `gx、gy`（投影重叠时净间距为 0），取较大轴为**分离轴**，则
+  **`m ≤ max(gx, gy) / 2 − R`**——两条刀心线在分离轴上的间距为 `g_axis − 2R − 2m`，必须 ≥ 0（另一轴两标签本就不重叠，刀具互不占位）。
+
+约束按“限值最小 → 板边优先于标签对 → 方向（左/上/右/下）→ 标签索引、标签对索引”稳定排序，故最紧约束 `binding` 与最大留边对相同输入严格一致；即使刀具半径大到 `maxMargin` 为负（任何留边都放不下）也会明确给出该负值与最紧约束。
+
+- **输入留边可行**（`m ≤ maxMargin`，贴线恰好可行）：右侧「**裁切线叠加预览**」在板材坐标系上叠加黄色虚线凸点包络、黑色全局凸点、蓝/橙（0°/90°）成品边、红色刀心线，并在每个刀心线四角标注 `TL/TR/BR/BL x,y`（mm）与标签编号；统计条显示最大统一留边、最紧约束来源（某标签的某条板边，或某标签对的水平/竖直分离轴）、贴线约束数与当前余量；
+- **输入留边超限**：`ok=false`，`labels/svg/csv` 全空——**不输出部分刀路**；`errors[]` 列出**所有**被违反的板边（`plate-edge-limit`，含标签号与方向）与标签对（`label-pair-limit`，含两个标签号、分离轴与两轴净间距），首条 `binding:true` 为最紧约束并给出 `maxMargin`，末条汇总其余违反处数量与“降至 maxMargin 即可行”的提示。
+
+**下载裁切线 CSV**（UTF-8 BOM、CRLF，Excel 可直接打开）：每条标签两行（`finish_edge` / `tool_center`），表头固定为
+
+```
+label_index,rotation_deg,rect,corner_tl_x_mm,corner_tl_y_mm,corner_tr_x_mm,corner_tr_y_mm,corner_br_x_mm,corner_br_y_mm,corner_bl_x_mm,corner_bl_y_mm
+```
+
+四角顺序为 TL（左上）→ TR（右上）→ BR（右下）→ BL（左下），原点在板材左上角、y 向下。**下载裁切线 SVG** 为自包含整板叠加文档（`width/height` 以 mm 标注，含全局凸点、三层矩形、标签编号与四角坐标文本）。
 
 ## 压印质检模式
 
@@ -271,6 +309,26 @@ npm test           # 运行转换/排版/质检单元测试（node:test）
 - `csv` 为带 UTF-8 BOM 的下载文本，表头 **`step,label,x_mm,y_mm,travel_mm`**。
 - `ok=false`（点数超过 2000、`dots` 缺失/为空、起点非数字、点坐标非法、板材尺寸非法）时 `steps` 为空数组、`stats/svg/csv` 为 `null`，`errors[]` 明确给出原因（点数错误类型 `too-many-points`），不输出任何部分路径。
 
+### `POST /api/panel/cut`
+
+拼版裁切线。复用一次成功 `/api/panel` 的结果：`labels` 直接取响应的 `labels[]`（每项需含 `index` 与全局 `dots[]{x,y,r}`）；也可只传顶层 `dots[]`（点必须带 1 基 `label` 字段），接口按标签编号自动分组。`plateWidth/plateHeight` 取拼版板材尺寸：
+
+```json
+{
+  "labels": [ { "index": 1, "rotation": 0, "dots": [{ "x": 7.5, "y": 5, "r": 0.75 }] } ],
+  "plateWidth": 120, "plateHeight": 80,
+  "minMargin": 0.5, "toolRadius": 0.5
+}
+```
+
+返回 `{ ok, errors, params, labelCount, maxMargin, binding, labels[], stats, svg, csv }`：
+
+- 三层矩形按全局坐标计算：`labels[].envelope`（凸点中心+凸点半径包络）、`finish`（外扩 `minMargin` 的成品边）、`toolCenter`（再外扩 `toolRadius` 的刀心线），均为 `{x,y,width,height}`；`corners[]` 按 `TL/TR/BR/BL` 给出刀心线四角 `{corner,x,y}` 毫米坐标；另含 `index/text/rotation/dotCount`；
+- `maxMargin` 为**整版允许的最大统一留边**（板边 + 标签对刀具占位两类约束的最小值）；`binding` 描述最紧约束：板边时 `{kind:"plate",side:"left|right|top|bottom",label,limit}`，标签对时 `{kind:"pair",labelA,labelB,axis:"x|y",gapX,gapY,limit}`；
+- `stats` 含 `labelCount/minMargin/toolRadius/maxMargin/slack(=maxMargin−minMargin)/plateConstraints/pairConstraints/bindingCount`；
+- `csv` 表头 **`label_index,rotation_deg,rect,corner_tl_x_mm,...,corner_bl_y_mm`**，每标签 `finish_edge` / `tool_center` 两行（UTF-8 BOM、CRLF）；`svg` 为自包含整板叠加图（`cut-envelope` 黄虚线、`cut-dots` 全局凸点、`cut-finish` 成品边、`cut-tool-center` 红刀心线、`cut-label-index` 编号、`cut-corner` 四角坐标，每组带 `data-label-index/data-rotation`）；
+- `ok=false`（留边超限、刀具半径过大使 `maxMargin<0`、缺拼版数据、留边/刀具半径为负、板材尺寸非法、凸点坐标非法）时 `labels` 为空、`svg/csv=null`，**不输出任何部分刀路**；超限时 `errors[]` 首条 `binding:true` 指出最紧的板边（类型 `plate-edge-limit`）或标签对（类型 `label-pair-limit`，含 `labelA/labelB/axis/gapX/gapY/limit`），其后列出全部其余违反项，末条类型 `limit-summary`；参数错误类型为 `param`，无拼版数据为 `no-panel`。
+
 ### `POST /api/qc`
 
 ```json
@@ -329,13 +387,14 @@ npm test           # 运行转换/排版/质检单元测试（node:test）
 ## 项目结构
 
 ```
-├── server.js            # Express 服务：静态页面 + /api/decode + /api/layout + /api/panel + /api/path + /api/qc + /api/qc/calibrate
+├── server.js            # Express 服务：静态页面 + /api/decode + /api/layout + /api/panel + /api/panel/cut + /api/path + /api/qc + /api/qc/calibrate
 ├── lib/braille.js       # 核心：一级盲文转换、点阵解码（盲文 -> 文本/逐单元/未知字符定位）、整词换行排版、毫米坐标 SVG 生成
 ├── lib/panel.js         # 核心：多标签解析、单行矩形复用、0/90° 行级装箱（剩余面积最小稳定择优）、整板 SVG/JSON
+├── lib/cut.js           # 核心：拼版裁切线（凸点包络 -> 外扩留边成品边 -> 外扩刀具半径刀心线、板边/标签对最大统一留边约束、四角 CSV/叠加 SVG）
 ├── lib/path.js          # 核心：压印路径（最近邻 + 同距离稳定决胜、最多 20 轮首改进 2-opt、steps/CSV/叠加 SVG）
 ├── lib/qc.js            # 核心：实测 CSV 解析（行号定位）、一对一最优匹配、判定/SVG/CSV 报告、自动校准（纯平移 + 小角度刚体）
-├── public/              # 原生前端（index.html / app.js / style.css，四个页签：点阵解码 + 排版/拼版（内置压印路径区）+ 质检）
-├── test/                # node:test 单元/接口测试（点阵解码 + 排版 + 拼版 + 压印路径 + 质检 + HTTP API）
+├── public/              # 原生前端（index.html / app.js / style.css，四个页签：点阵解码 + 排版/拼版（内置压印路径与拼版裁切线区）+ 质检）
+├── test/                # node:test 单元/接口测试（点阵解码 + 排版 + 拼版 + 裁切线 + 压印路径 + 质检 + HTTP API）
 ├── Dockerfile           # 单阶段构建，npm install + 启动
 └── docker-compose.yml   # 一条命令编排启动
 ```
@@ -346,4 +405,4 @@ npm test           # 运行转换/排版/质检单元测试（node:test）
 npm test
 ```
 
-覆盖：盲文码表与换行规则、点阵解码（大小写/连续数字段/胶着标点/空白保留、非盲文字符与未收录点位及悬空 `⠠` 的逐个位置+码点报错、正向往返）（`test/braille.test.js`）、多标签解析/旋转/装箱择优/逐条失败语义（`test/panel.test.js`）、压印路径的最近邻选择、同距离三级稳定决胜、确定性、每点恰好访问一次、2-opt 首改进语义与 20 轮封顶、2000 点上限/参数非法不输出部分路径、CSV 表头与 SVG 标注（`test/path.test.js`）、压印匹配/质检/自动校准/拼版基准标签标注（`test/qc.test.js`）、以及通过临时端口启动真实服务的 HTTP 接口与静态资源测试（`test/api.test.js`，含 `POST /api/decode` 与“拼版顶层 dots 直接作为压印路径与质检基准”的兼容验证）。
+覆盖：盲文码表与换行规则、点阵解码（大小写/连续数字段/胶着标点/空白保留、非盲文字符与未收录点位及悬空 `⠠` 的逐个位置+码点报错、正向往返）（`test/braille.test.js`）、多标签解析/旋转/装箱择优/逐条失败语义（`test/panel.test.js`）、拼版裁切线的三层矩形几何、90° 旋转全局坐标、板边/标签对最大统一留边约束与最紧约束决胜、贴线可行、超限逐条报错且不输出部分刀路、顶层 dots 分组兜底、四角 CSV 与叠加 SVG（`test/cut.test.js`）、压印路径的最近邻选择、同距离三级稳定决胜、确定性、每点恰好访问一次、2-opt 首改进语义与 20 轮封顶、2000 点上限/参数非法不输出部分路径、CSV 表头与 SVG 标注（`test/path.test.js`）、压印匹配/质检/自动校准/拼版基准标签标注（`test/qc.test.js`）、以及通过临时端口启动真实服务的 HTTP 接口与静态资源测试（`test/api.test.js`，含 `POST /api/panel/cut` 与“拼版顶层 dots 直接作为压印路径、质检基准与裁切线输入”的兼容验证）。
